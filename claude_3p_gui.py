@@ -200,7 +200,64 @@ class ConfigManager:
 
 
 class App(tk.Tk):
-    pass
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("Claude Desktop 第三方网关配置")
+        self.geometry("560x520")
+        self.resizable(False, False)
+
+        # Default font tuned for CJK on Windows
+        try:
+            self.option_add("*Font", "{Microsoft YaHei UI} 10")
+        except tk.TclError:
+            pass  # Font not installed (e.g. macOS during dev)
+
+        self.config_mgr = ConfigManager()
+        self._fetch_queue: queue.Queue = queue.Queue()
+        self._model_vars: dict[str, tk.BooleanVar] = {}
+
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        pad = {"padx": 12, "pady": 4}
+
+        # --- Gateway URL radios ---
+        ttk.Label(self, text="网关 URL:", font=("Microsoft YaHei UI", 10, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", **pad
+        )
+        self.url_var = tk.StringVar(value=GATEWAYS[0])
+        for i, url in enumerate(GATEWAYS, start=1):
+            ttk.Radiobutton(
+                self, text=url, value=url, variable=self.url_var
+            ).grid(row=i, column=0, columnspan=3, sticky="w", padx=24)
+
+        # --- API Key entry ---
+        ttk.Label(self, text="API Key:").grid(
+            row=4, column=0, sticky="w", **pad
+        )
+        self.key_var = tk.StringVar()
+        self.key_entry = ttk.Entry(
+            self, textvariable=self.key_var, show="•", width=48
+        )
+        self.key_entry.grid(row=4, column=1, sticky="we", padx=(0, 4), pady=4)
+        self.show_key_btn = ttk.Button(
+            self, text="\U0001f441", width=3, command=self._toggle_show_key
+        )
+        self.show_key_btn.grid(row=4, column=2, padx=(0, 12), pady=4)
+        self.key_var.trace_add("write", lambda *_: self._update_fetch_button_state())
+
+        # Placeholder for later tasks
+        ttk.Separator(self, orient="horizontal").grid(
+            row=99, column=0, columnspan=3, sticky="we", pady=8
+        )
+
+    def _toggle_show_key(self) -> None:
+        current = self.key_entry.cget("show")
+        self.key_entry.configure(show="" if current else "•")
+
+    def _update_fetch_button_state(self) -> None:
+        """Stub — fetch button is created in Task 8. Will enable/disable it."""
+        pass
 
 
 def main() -> None:
