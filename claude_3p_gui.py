@@ -263,6 +263,15 @@ class App(tk.Tk):
             row=6, column=0, sticky="w", padx=12, pady=(8, 0)
         )
 
+        btn_frame = ttk.Frame(self)
+        btn_frame.grid(row=6, column=1, columnspan=2, sticky="e", padx=12, pady=(8, 0))
+        ttk.Button(btn_frame, text="全选", command=self._select_all).pack(
+            side="left", padx=2
+        )
+        ttk.Button(btn_frame, text="全清", command=self._clear_all).pack(
+            side="left", padx=2
+        )
+
         list_frame = ttk.Frame(self, relief="sunken", borderwidth=1)
         list_frame.grid(
             row=7, column=0, columnspan=3, sticky="nsew", padx=12, pady=4
@@ -285,6 +294,20 @@ class App(tk.Tk):
         self._list_canvas.configure(yscrollcommand=scrollbar.set)
         self._list_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+        self.manual_frame = ttk.Frame(self)
+        self.manual_frame.grid(row=8, column=0, columnspan=3, sticky="we", padx=12, pady=4)
+        self.manual_frame.grid_remove()  # hidden until fetch failure
+        ttk.Label(self.manual_frame, text="手动输入模型 (逗号分隔):").pack(
+            side="left"
+        )
+        self.manual_var = tk.StringVar()
+        ttk.Entry(self.manual_frame, textvariable=self.manual_var, width=40).pack(
+            side="left", padx=4, fill="x", expand=True
+        )
+        ttk.Button(self.manual_frame, text="应用", command=self._apply_manual).pack(
+            side="left"
+        )
 
     def _toggle_show_key(self) -> None:
         current = self.key_entry.cget("show")
@@ -329,11 +352,12 @@ class App(tk.Tk):
             return
         self.fetch_btn.configure(state="normal")
         if kind == "ok":
+            self.manual_frame.grid_remove()
             self._render_models(payload, check_default=True)
             self.status_var.set(f"状态: 已获取 {len(payload)} 个模型")
         else:
             self.status_var.set(f"状态: {payload}")
-            # Manual-input fallback UI is added in Task 9
+            self.manual_frame.grid()
 
     def _clear_model_list(self) -> None:
         for child in self._list_inner.winfo_children():
@@ -348,6 +372,23 @@ class App(tk.Tk):
                 self._list_inner, text=name, variable=var
             ).pack(anchor="w", padx=6, pady=1)
             self._model_vars[name] = var
+
+    def _select_all(self) -> None:
+        for v in self._model_vars.values():
+            v.set(True)
+
+    def _clear_all(self) -> None:
+        for v in self._model_vars.values():
+            v.set(False)
+
+    def _apply_manual(self) -> None:
+        raw = self.manual_var.get()
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        if not names:
+            self.status_var.set("状态: 请输入至少一个模型名")
+            return
+        self._render_models(names, check_default=True)
+        self.status_var.set(f"状态: 手动输入 {len(names)} 个模型")
 
 
 def main() -> None:
