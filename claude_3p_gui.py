@@ -309,6 +309,26 @@ class App(tk.Tk):
             side="left"
         )
 
+        # --- Profile name + restart + action buttons ---
+        bottom = ttk.Frame(self)
+        bottom.grid(row=9, column=0, columnspan=3, sticky="we", padx=12, pady=(8, 0))
+        ttk.Label(bottom, text="档案名:").pack(side="left")
+        self.profile_var = tk.StringVar(value="Default")
+        ttk.Entry(bottom, textvariable=self.profile_var, width=20).pack(
+            side="left", padx=(4, 12)
+        )
+        self.restart_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            bottom, text="写入后重启 Claude Desktop", variable=self.restart_var
+        ).pack(side="left")
+
+        actions = ttk.Frame(self)
+        actions.grid(row=10, column=0, columnspan=3, pady=(12, 4))
+        ttk.Button(actions, text="写入配置", command=self._on_write_click).pack(
+            side="left", padx=6
+        )
+        ttk.Button(actions, text="退出", command=self.destroy).pack(side="left", padx=6)
+
     def _toggle_show_key(self) -> None:
         current = self.key_entry.cget("show")
         self.key_entry.configure(show="" if current else "•")
@@ -389,6 +409,54 @@ class App(tk.Tk):
             return
         self._render_models(names, check_default=True)
         self.status_var.set(f"状态: 手动输入 {len(names)} 个模型")
+
+    def _on_write_click(self) -> None:
+        # Validate
+        if not self.key_var.get().strip():
+            messagebox.showwarning("校验失败", "请输入 API Key")
+            return
+        if not self.profile_var.get().strip():
+            messagebox.showwarning("校验失败", "请输入档案名")
+            return
+        selected = [name for name, v in self._model_vars.items() if v.get()]
+        if not selected:
+            messagebox.showwarning("校验失败", "请至少选择一个模型")
+            return
+        if not self.config_mgr.claude_dir_exists():
+            messagebox.showerror(
+                "Claude Desktop 未找到",
+                f"未找到配置目录: {self.config_mgr.base_dir}\n"
+                "请先安装并启动 Claude Desktop 至少一次。",
+            )
+            return
+
+        # Backup and write
+        try:
+            backup = self.config_mgr.backup_library()
+            if backup is not None:
+                self._log(f"已备份配置到: {backup}")
+            base_url = normalize_base_url(self.url_var.get())
+            profile_id = self.config_mgr.write_profile(
+                name=self.profile_var.get().strip(),
+                base_url=base_url,
+                api_key=self.key_var.get().strip(),
+                models=selected,
+            )
+            profile_file = self.config_mgr.lib_dir / f"{profile_id}.json"
+            self._log(f"配置已写入: {profile_file}")
+            self._log(f"档案 '{self.profile_var.get()}' 已设为激活")
+        except Exception as e:
+            messagebox.showerror("写入失败", str(e))
+            return
+
+        # Optional restart
+        if self.restart_var.get():
+            if self.config_mgr.restart_claude():
+                self._log("已重启 Claude Desktop")
+            else:
+                self._log("未找到 Claude.exe,请手动启动")
+
+        messagebox.showinfo("完成", "配置写入成功")
 
 
 def main() -> None:
