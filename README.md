@@ -40,6 +40,29 @@ python -m pytest tests/ -v
 python claude_3p_gui.py   # 运行 GUI (macOS/Linux 可调试,但写入路径仅 Windows 可用)
 ```
 
+## 在 GitHub Actions 上自动打包 (无需 Windows 机器)
+
+项目自带 `.github/workflows/build-windows.yml`,推到 GitHub 后会自动:
+
+1. 在 `windows-latest` runner 上跑单元测试
+2. 用 PyInstaller 打出 `Claude3pSetup.exe`
+3. 把 exe 作为 artifact 上传(Actions 页面可下载)
+4. 打 tag (例如 `git tag v1.0.0 && git push --tags`) 时,自动创建 GitHub Release 并附上 exe
+
+### 快速上手
+
+```bash
+cd Claude3pSetupWin
+git remote add origin https://github.com/<你>/<你的仓库>.git
+git push -u origin main
+```
+
+然后在仓库的 Actions tab 就能看到构建进度,构建完成后下载 artifact 得到 `.exe`。
+
+要永久发布版本: `git tag v1.0.0 && git push --tags` → 自动生成 Release。
+
 ## 交叉构建说明
 
-PyInstaller 不支持交叉编译: 在 macOS/Linux 上运行 PyInstaller 只能产出对应平台的二进制。生成 `.exe` 必须在 Windows 上运行 `build.bat`,或在 CI (如 GitHub Actions `windows-latest`) 里构建。
+PyInstaller 不支持交叉编译: 在 macOS/Linux 上运行 PyInstaller 只能产出对应平台的二进制。生成 `.exe` 有两条路:
+- 在 Windows 上双击 `build.bat` (最快)
+- 推到 GitHub,让 GitHub Actions 自动打包 (无需 Windows 机器)
