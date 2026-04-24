@@ -35,6 +35,10 @@ def normalize_base_url(url: str) -> str:
     return url + "/"
 
 
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
 class ConfigManager:
     """Filesystem layer for Claude-3p configLibrary.
 
@@ -100,6 +104,41 @@ class ConfigManager:
             meta["entries"].append({"id": profile_id, "name": name})
         self.save_meta(meta)
         return profile_id
+
+    def backup_library(self) -> Path | None:
+        """Copy configLibrary to a timestamped sibling dir. Returns new path or None."""
+        if not self.lib_dir.exists():
+            return None
+        dest = self.base_dir / f"configLibrary.bak-{_timestamp()}"
+        shutil.copytree(self.lib_dir, dest)
+        return dest
+
+    def restart_claude(self) -> bool:
+        """Kill Claude.exe and start it again. Returns True on success, False if exe not found."""
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "Claude.exe"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        candidates: list[Path] = []
+        for root in (
+            os.environ.get("LOCALAPPDATA"),
+            os.environ.get("PROGRAMFILES"),
+        ):
+            if not root:
+                continue
+            claude_dir = Path(root) / "Claude"
+            if claude_dir.exists():
+                candidates.extend(claude_dir.glob("*.exe"))
+        # Prefer Claude.exe explicitly if present
+        exe = next((p for p in candidates if p.name.lower() == "claude.exe"), None)
+        if exe is None and candidates:
+            exe = candidates[0]
+        if exe is None:
+            return False
+        subprocess.Popen([str(exe)], close_fds=True)
+        return True
 
 
 class ModelFetcher:

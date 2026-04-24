@@ -154,3 +154,29 @@ class TestWriteProfile:
         assert meta["appliedId"] == pid2
         names = {e["name"] for e in meta["entries"]}
         assert names == {"A", "B"}
+
+
+class TestBackup:
+    def test_backup_copies_library_to_timestamped_dir(self, tmp_path, monkeypatch):
+        mgr = app.ConfigManager(base_dir=tmp_path / "Claude-3p")
+        (tmp_path / "Claude-3p").mkdir()
+        mgr.ensure_meta()
+        mgr.write_profile("X", "https://dk.claudecode.love/", "k", ["m"])
+
+        fixed_ts = "20260424-120000"
+        monkeypatch.setattr(
+            app, "_timestamp", lambda: fixed_ts, raising=False
+        )
+
+        backup_path = mgr.backup_library()
+
+        assert backup_path.name == f"configLibrary.bak-{fixed_ts}"
+        assert backup_path.is_dir()
+        assert (backup_path / "_meta.json").exists()
+        # Original still intact
+        assert mgr.lib_dir.exists()
+
+    def test_backup_noop_when_library_missing(self, tmp_path):
+        mgr = app.ConfigManager(base_dir=tmp_path / "Claude-3p")
+        # lib_dir does not exist
+        assert mgr.backup_library() is None
