@@ -68,6 +68,39 @@ class ConfigManager:
             encoding="utf-8",
         )
 
+    def write_profile(
+        self,
+        name: str,
+        base_url: str,
+        api_key: str,
+        models: list[str],
+    ) -> str:
+        """Write profile JSON and update _meta.json. Returns profile id.
+
+        Reuses existing id when a profile with the same name already exists.
+        """
+        self.ensure_meta()
+        meta = self.read_meta()
+        existing = next((e for e in meta["entries"] if e["name"] == name), None)
+        profile_id = existing["id"] if existing else str(uuid.uuid4())
+
+        profile = {
+            "inferenceProvider": "gateway",
+            "inferenceGatewayBaseUrl": base_url,
+            "inferenceGatewayApiKey": api_key,
+            "inferenceModels": list(models),
+        }
+        (self.lib_dir / f"{profile_id}.json").write_text(
+            json.dumps(profile, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        meta["appliedId"] = profile_id
+        if not existing:
+            meta["entries"].append({"id": profile_id, "name": name})
+        self.save_meta(meta)
+        return profile_id
+
 
 class ModelFetcher:
     pass
