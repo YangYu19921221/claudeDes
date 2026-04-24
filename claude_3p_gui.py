@@ -39,6 +39,64 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
+class ModelFetchError(Exception):
+    """Raised when model listing cannot be obtained (with a user-facing message)."""
+
+
+class ModelFetcher:
+    """HTTP layer: try /v1/models then /models on a base URL."""
+
+    @staticmethod
+    def fetch(base_url: str, api_key: str, timeout: float = FETCH_TIMEOUT_SEC) -> list[str]:
+        base_url = normalize_base_url(base_url)
+        endpoints = [f"{base_url}v1/models", f"{base_url}models"]
+        last_error: ModelFetchError | None = None
+        for endpoint in endpoints:
+            try:
+                req = urllib.request.Request(endpoint, method="GET")
+                req.add_header("Authorization", f"Bearer {api_key}")
+                req.add_header("x-api-key", api_key)
+                req.add_header("anthropic-version", "2023-06-01")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read()
+                try:
+                    parsed = json.loads(raw)
+                except (ValueError, json.JSONDecodeError) as e:
+                    raise ModelFetchError(f"响应格式异常: {e}") from e
+                data = parsed.get("data") if isinstance(parsed, dict) else None
+                if not data:
+                    raise ModelFetchError("响应格式异常: 缺少 data 字段")
+                ids = sorted({item["id"] for item in data if "id" in item})
+                if not ids:
+                    raise ModelFetchError("响应格式异常: 无模型 id")
+                return ids
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    raise ModelFetchError(f"鉴权失败 ({e.code}),请检查 API Key") from e
+                if 500 <= e.code < 600:
+                    last_error = ModelFetchError(f"服务端错误 {e.code}")
+                    continue
+                if e.code == 404:
+                    last_error = ModelFetchError(f"接口不存在 ({endpoint})")
+                    continue
+                last_error = ModelFetchError(f"HTTP 错误 {e.code}")
+                continue
+            except urllib.error.URLError as e:
+                last_error = ModelFetchError(f"网络错误: {e.reason}")
+                continue
+            except TimeoutError:
+                last_error = ModelFetchError("网络超时,请检查网络或 URL 可达性")
+                continue
+            except Exception as e:
+                # Match socket.timeout (subclass of OSError on some Pythons)
+                if "timed out" in str(e).lower():
+                    last_error = ModelFetchError("网络超时,请检查网络或 URL 可达性")
+                    continue
+                last_error = ModelFetchError(f"未知错误: {e}")
+                continue
+        raise last_error or ModelFetchError("未知错误")
+
+
 class ConfigManager:
     """Filesystem layer for Claude-3p configLibrary.
 
@@ -139,10 +197,6 @@ class ConfigManager:
             return False
         subprocess.Popen([str(exe)], close_fds=True)
         return True
-
-
-class ModelFetcher:
-    pass
 
 
 class App(tk.Tk):
