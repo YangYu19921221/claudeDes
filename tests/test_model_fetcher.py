@@ -1,6 +1,5 @@
 """Tests for ModelFetcher (urllib mocked)."""
 
-import io
 import json
 from unittest.mock import patch, MagicMock
 
@@ -94,4 +93,24 @@ class TestModelFetcher:
         with patch("claude_3p_gui.urllib.request.urlopen", return_value=resp):
             with pytest.raises(app.ModelFetchError) as exc:
                 app.ModelFetcher.fetch("https://x.com/", "sk")
-        assert "响应格式异常" in str(exc.value)
+        msg = str(exc.value)
+        assert "响应格式异常" in msg
+        # Must NOT be wrapped as "未知错误: 响应格式异常: ..." — that's the bug we just fixed.
+        assert "未知错误" not in msg
+
+    def test_missing_data_field_surfaces_clean_error(self):
+        """Bug fix: self-raised ModelFetchError must not be caught by except Exception."""
+        resp = _resp({"not_data": []})
+        with patch("claude_3p_gui.urllib.request.urlopen", return_value=resp):
+            with pytest.raises(app.ModelFetchError) as exc:
+                app.ModelFetcher.fetch("https://x.com/", "sk")
+        msg = str(exc.value)
+        assert "响应格式异常" in msg
+        assert "未知错误" not in msg
+
+    def test_empty_data_list_surfaces_clean_error(self):
+        resp = _resp({"data": []})
+        with patch("claude_3p_gui.urllib.request.urlopen", return_value=resp):
+            with pytest.raises(app.ModelFetchError) as exc:
+                app.ModelFetcher.fetch("https://x.com/", "sk")
+        assert "未知错误" not in str(exc.value)

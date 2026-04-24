@@ -70,6 +70,9 @@ class ModelFetcher:
                 if not ids:
                     raise ModelFetchError("响应格式异常: 无模型 id")
                 return ids
+            except ModelFetchError as e:
+                last_error = e
+                continue
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):
                     raise ModelFetchError(f"鉴权失败 ({e.code}),请检查 API Key") from e
@@ -215,6 +218,8 @@ class App(tk.Tk):
         self.config_mgr = ConfigManager()
         self._fetch_queue: queue.Queue = queue.Queue()
         self._model_vars: dict[str, tk.BooleanVar] = {}
+        self._is_fetching = False
+        self._is_writing = False
 
         self._build_layout()
 
@@ -324,9 +329,10 @@ class App(tk.Tk):
 
         actions = ttk.Frame(self)
         actions.grid(row=10, column=0, columnspan=3, pady=(12, 4))
-        ttk.Button(actions, text="写入配置", command=self._on_write_click).pack(
-            side="left", padx=6
+        self.write_btn = ttk.Button(
+            actions, text="写入配置", command=self._on_write_click
         )
+        self.write_btn.pack(side="left", padx=6)
         ttk.Button(actions, text="退出", command=self.destroy).pack(side="left", padx=6)
 
         # --- Log area ---
@@ -344,16 +350,20 @@ class App(tk.Tk):
 
     def _update_fetch_button_state(self) -> None:
         has_key = bool(self.key_var.get().strip())
-        self.fetch_btn.configure(state="normal" if has_key else "disabled")
-        if not has_key:
+        enabled = has_key and not self._is_fetching
+        self.fetch_btn.configure(state="normal" if enabled else "disabled")
+        if not has_key and not self._is_fetching:
             self.status_var.set("状态: 待输入 API Key")
 
 
     def _on_fetch_click(self) -> None:
+        if self._is_fetching:
+            return
         api_key = self.key_var.get().strip()
         url = self.url_var.get()
         if not api_key:
             return
+        self._is_fetching = True
         self.fetch_btn.configure(state="disabled")
         self.status_var.set("状态: 拉取中...")
         self._clear_model_list()
@@ -379,7 +389,8 @@ class App(tk.Tk):
         except queue.Empty:
             self.after(100, self._poll_fetch_queue)
             return
-        self.fetch_btn.configure(state="normal")
+        self._is_fetching = False
+        self._update_fetch_button_state()
         if kind == "ok":
             self.manual_frame.grid_remove()
             self._render_models(payload, check_default=True)
@@ -418,13 +429,17 @@ class App(tk.Tk):
             return
         self._render_models(names, check_default=True)
         self.status_var.set(f"状态: 手动输入 {len(names)} 个模型")
+        self.manual_frame.grid_remove()
 
     def _on_write_click(self) -> None:
+        if self._is_writing:
+            return
         # Validate
         if not self.key_var.get().strip():
             messagebox.showwarning("校验失败", "请输入 API Key")
             return
-        if not self.profile_var.get().strip():
+        profile_name = self.profile_var.get().strip()
+        if not profile_name:
             messagebox.showwarning("校验失败", "请输入档案名")
             return
         selected = [name for name, v in self._model_vars.items() if v.get()]
@@ -439,33 +454,33 @@ class App(tk.Tk):
             )
             return
 
-        # Backup and write
+        self._is_writing = True
+        self.write_btn.configure(state="disabled")
         try:
             backup = self.config_mgr.backup_library()
             if backup is not None:
                 self._log(f"已备份配置到: {backup}")
             base_url = normalize_base_url(self.url_var.get())
             profile_id = self.config_mgr.write_profile(
-                name=self.profile_var.get().strip(),
+                name=profile_name,
                 base_url=base_url,
                 api_key=self.key_var.get().strip(),
                 models=selected,
             )
             profile_file = self.config_mgr.lib_dir / f"{profile_id}.json"
             self._log(f"配置已写入: {profile_file}")
-            self._log(f"档案 '{self.profile_var.get()}' 已设为激活")
+            self._log(f"档案 '{profile_name}' 已设为激活")
+            if self.restart_var.get():
+                if self.config_mgr.restart_claude():
+                    self._log("已重启 Claude Desktop")
+                else:
+                    self._log("未找到 Claude.exe,请手动启动")
+            messagebox.showinfo("完成", "配置写入成功")
         except Exception as e:
             messagebox.showerror("写入失败", str(e))
-            return
-
-        # Optional restart
-        if self.restart_var.get():
-            if self.config_mgr.restart_claude():
-                self._log("已重启 Claude Desktop")
-            else:
-                self._log("未找到 Claude.exe,请手动启动")
-
-        messagebox.showinfo("完成", "配置写入成功")
+        finally:
+            self._is_writing = False
+            self.write_btn.configure(state="normal")
 
     def _log(self, msg: str) -> None:
         self._log_text.configure(state="normal")
