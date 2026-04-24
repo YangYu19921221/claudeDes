@@ -246,18 +246,108 @@ class App(tk.Tk):
         self.show_key_btn.grid(row=4, column=2, padx=(0, 12), pady=4)
         self.key_var.trace_add("write", lambda *_: self._update_fetch_button_state())
 
-        # Placeholder for later tasks
-        ttk.Separator(self, orient="horizontal").grid(
-            row=99, column=0, columnspan=3, sticky="we", pady=8
+        # --- Fetch button + status ---
+        self.fetch_btn = ttk.Button(
+            self,
+            text="拉取模型列表",
+            command=self._on_fetch_click,
+            state="disabled",
         )
+        self.fetch_btn.grid(row=5, column=0, sticky="w", padx=12, pady=(12, 4))
+        self.status_var = tk.StringVar(value="状态: 待输入 API Key")
+        self.status_label = ttk.Label(self, textvariable=self.status_var)
+        self.status_label.grid(row=5, column=1, columnspan=2, sticky="w", pady=(12, 4))
+
+        # --- Model list (scrollable checkboxes) ---
+        ttk.Label(self, text="可用模型:").grid(
+            row=6, column=0, sticky="w", padx=12, pady=(8, 0)
+        )
+
+        list_frame = ttk.Frame(self, relief="sunken", borderwidth=1)
+        list_frame.grid(
+            row=7, column=0, columnspan=3, sticky="nsew", padx=12, pady=4
+        )
+        self.rowconfigure(7, weight=1)
+        self.columnconfigure(1, weight=1)
+
+        self._list_canvas = tk.Canvas(list_frame, height=180, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self._list_canvas.yview
+        )
+        self._list_inner = ttk.Frame(self._list_canvas)
+        self._list_inner.bind(
+            "<Configure>",
+            lambda _e: self._list_canvas.configure(
+                scrollregion=self._list_canvas.bbox("all")
+            ),
+        )
+        self._list_canvas.create_window((0, 0), window=self._list_inner, anchor="nw")
+        self._list_canvas.configure(yscrollcommand=scrollbar.set)
+        self._list_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
     def _toggle_show_key(self) -> None:
         current = self.key_entry.cget("show")
         self.key_entry.configure(show="" if current else "•")
 
     def _update_fetch_button_state(self) -> None:
-        """Stub — fetch button is created in Task 8. Will enable/disable it."""
-        pass
+        has_key = bool(self.key_var.get().strip())
+        self.fetch_btn.configure(state="normal" if has_key else "disabled")
+        if not has_key:
+            self.status_var.set("状态: 待输入 API Key")
+
+
+    def _on_fetch_click(self) -> None:
+        api_key = self.key_var.get().strip()
+        url = self.url_var.get()
+        if not api_key:
+            return
+        self.fetch_btn.configure(state="disabled")
+        self.status_var.set("状态: 拉取中...")
+        self._clear_model_list()
+        threading.Thread(
+            target=self._fetch_worker,
+            args=(url, api_key),
+            daemon=True,
+        ).start()
+        self.after(100, self._poll_fetch_queue)
+
+    def _fetch_worker(self, url: str, api_key: str) -> None:
+        try:
+            models = ModelFetcher.fetch(url, api_key)
+            self._fetch_queue.put(("ok", models))
+        except ModelFetchError as e:
+            self._fetch_queue.put(("error", str(e)))
+        except Exception as e:
+            self._fetch_queue.put(("error", f"未知错误: {e}"))
+
+    def _poll_fetch_queue(self) -> None:
+        try:
+            kind, payload = self._fetch_queue.get_nowait()
+        except queue.Empty:
+            self.after(100, self._poll_fetch_queue)
+            return
+        self.fetch_btn.configure(state="normal")
+        if kind == "ok":
+            self._render_models(payload, check_default=True)
+            self.status_var.set(f"状态: 已获取 {len(payload)} 个模型")
+        else:
+            self.status_var.set(f"状态: {payload}")
+            # Manual-input fallback UI is added in Task 9
+
+    def _clear_model_list(self) -> None:
+        for child in self._list_inner.winfo_children():
+            child.destroy()
+        self._model_vars.clear()
+
+    def _render_models(self, models: list[str], check_default: bool) -> None:
+        self._clear_model_list()
+        for name in models:
+            var = tk.BooleanVar(value=check_default)
+            ttk.Checkbutton(
+                self._list_inner, text=name, variable=var
+            ).pack(anchor="w", padx=6, pady=1)
+            self._model_vars[name] = var
 
 
 def main() -> None:
