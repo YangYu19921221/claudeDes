@@ -329,6 +329,15 @@ class App(tk.Tk):
         )
         ttk.Button(actions, text="退出", command=self.destroy).pack(side="left", padx=6)
 
+        # --- Log area ---
+        ttk.Label(self, text="日志:").grid(
+            row=11, column=0, sticky="w", padx=12, pady=(12, 0)
+        )
+        self._log_text = tk.Text(self, height=5, state="disabled", wrap="word")
+        self._log_text.grid(
+            row=12, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12)
+        )
+
     def _toggle_show_key(self) -> None:
         current = self.key_entry.cget("show")
         self.key_entry.configure(show="" if current else "•")
@@ -457,6 +466,13 @@ class App(tk.Tk):
                 self._log("未找到 Claude.exe,请手动启动")
 
         messagebox.showinfo("完成", "配置写入成功")
+
+    def _log(self, msg: str) -> None:
+        self._log_text.configure(state="normal")
+        ts = datetime.now().strftime("%H:%M:%S")
+        self._log_text.insert("end", f"[{ts}] {msg}\n")
+        self._log_text.see("end")
+        self._log_text.configure(state="disabled")
 
 
 def main() -> None:
