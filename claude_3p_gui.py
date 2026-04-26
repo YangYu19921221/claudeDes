@@ -174,30 +174,140 @@ class ConfigManager:
         shutil.copytree(self.lib_dir, dest)
         return dest
 
-    def restart_claude(self) -> bool:
-        """Kill Claude.exe and start it again. Returns True on success, False if exe not found."""
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "Claude.exe"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    def _cached_exe_path(self) -> Path | None:
+        """Read previously discovered Claude.exe path from _meta.json (claudeExePath)."""
+        if not self.meta_path.exists():
+            return None
+        try:
+            meta = self.read_meta()
+        except (ValueError, OSError):
+            return None
+        cached = meta.get("claudeExePath")
+        if cached:
+            p = Path(cached)
+            if p.exists():
+                return p
+        return None
+
+    def _save_exe_path(self, exe: Path) -> None:
+        """Persist the discovered Claude.exe path into _meta.json for next time."""
+        try:
+            self.ensure_meta()
+            meta = self.read_meta()
+            meta["claudeExePath"] = str(exe)
+            self.save_meta(meta)
+        except (ValueError, OSError):
+            pass
+
+    def _find_exe_from_registry(self) -> Path | None:
+        """Look up Claude install path via Windows uninstall registry keys."""
+        try:
+            import winreg  # type: ignore[import-not-found]
+        except ImportError:
+            return None
+        roots = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Claude"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Claude"),
+        ]
+        for hive, subkey in roots:
+            try:
+                with winreg.OpenKey(hive, subkey) as key:
+                    for value_name in ("InstallLocation", "DisplayIcon"):
+                        try:
+                            val, _ = winreg.QueryValueEx(key, value_name)
+                        except FileNotFoundError:
+                            continue
+                        if not val:
+                            continue
+                        # DisplayIcon may be "C:\path\Claude.exe,0"
+                        val = str(val).split(",")[0].strip().strip('"')
+                        p = Path(val)
+                        if p.is_file() and p.suffix.lower() == ".exe":
+                            return p
+                        if p.is_dir():
+                            exe = p / "Claude.exe"
+                            if exe.exists():
+                                return exe
+                            hits = list(p.glob("Claude.exe")) or list(p.glob("*.exe"))
+                            if hits:
+                                return hits[0]
+            except (FileNotFoundError, OSError):
+                continue
+        return None
+
+    def _find_exe_from_running_process(self) -> Path | None:
+        """Query the running Claude process via WMIC for its ExecutablePath."""
+        try:
+            out = subprocess.run(
+                ["wmic", "process", "where", "name='Claude.exe'", "get", "ExecutablePath", "/value"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in (out.stdout or "").splitlines():
+            line = line.strip()
+            if line.lower().startswith("executablepath="):
+                path = line.split("=", 1)[1].strip()
+                if path:
+                    p = Path(path)
+                    if p.exists():
+                        return p
+        return None
+
+    def _find_exe_from_default_dirs(self) -> Path | None:
+        """Legacy fallback: check %LOCALAPPDATA%\\Claude and %PROGRAMFILES%\\Claude."""
         candidates: list[Path] = []
         for root in (
             os.environ.get("LOCALAPPDATA"),
             os.environ.get("PROGRAMFILES"),
+            os.environ.get("PROGRAMFILES(X86)"),
         ):
             if not root:
                 continue
             claude_dir = Path(root) / "Claude"
             if claude_dir.exists():
                 candidates.extend(claude_dir.glob("*.exe"))
-        # Prefer Claude.exe explicitly if present
         exe = next((p for p in candidates if p.name.lower() == "claude.exe"), None)
         if exe is None and candidates:
             exe = candidates[0]
+        return exe
+
+    def find_claude_exe(self) -> Path | None:
+        """Locate Claude.exe across drives. Order: cache → running proc → registry → default dirs."""
+        for finder in (
+            self._cached_exe_path,
+            self._find_exe_from_running_process,
+            self._find_exe_from_registry,
+            self._find_exe_from_default_dirs,
+        ):
+            try:
+                exe = finder()
+            except Exception:
+                exe = None
+            if exe is not None:
+                return exe
+        return None
+
+    def restart_claude(self, exe_override: Path | None = None) -> bool:
+        """Kill Claude.exe and start it again. Returns True on success, False if exe not found.
+
+        Resolution order: explicit override → cache → running process → registry → default dirs.
+        Found path is cached into _meta.json for next launch.
+        """
+        exe = exe_override or self.find_claude_exe()
+        # Kill after locating the running process so we can read its path first.
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "Claude.exe"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         if exe is None:
             return False
+        self._save_exe_path(exe)
         subprocess.Popen([str(exe)], close_fds=True)
         return True
 
@@ -474,7 +584,16 @@ class App(tk.Tk):
                 if self.config_mgr.restart_claude():
                     self._log("已重启 Claude Desktop")
                 else:
-                    self._log("未找到 Claude.exe,请手动启动")
+                    from tkinter import filedialog
+                    self._log("未在默认位置找到 Claude.exe,请手动选择安装路径")
+                    picked = filedialog.askopenfilename(
+                        title="请选择 Claude.exe",
+                        filetypes=[("Claude 可执行文件", "Claude.exe"), ("可执行文件", "*.exe")],
+                    )
+                    if picked and self.config_mgr.restart_claude(exe_override=Path(picked)):
+                        self._log(f"已重启 Claude Desktop ({picked})")
+                    else:
+                        self._log("未找到 Claude.exe,请手动启动")
             messagebox.showinfo("完成", "配置写入成功")
         except Exception as e:
             messagebox.showerror("写入失败", str(e))
